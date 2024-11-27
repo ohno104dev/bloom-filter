@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"strconv"
+	"strings"
 )
 
 type HashFunc func(string) uint
@@ -74,6 +76,62 @@ func (bf *BloomFilter) Dump(file string) error {
 	}
 
 	return w.Flush()
+}
+
+func (bf *BloomFilter) Load(file string) error {
+	fin, err := os.Open(file)
+	if err != nil {
+		return fmt.Errorf("Load: failed to open file %s: %w", file, err)
+	}
+	defer fin.Close()
+
+	scanner := bufio.NewScanner(fin)
+	var bitCount uint
+
+	if scanner.Scan() {
+		metadata := scanner.Text()
+		const prefix = "bitCount: "
+		if !strings.HasPrefix(metadata, prefix) {
+			return fmt.Errorf("Load: invalid metadata format: %q", metadata)
+		}
+
+		bitCountStr := strings.TrimSpace(strings.TrimPrefix(metadata, prefix))
+		parsedBitCount, err := strconv.Atoi(bitCountStr)
+		if err != nil || parsedBitCount < 0 {
+			return fmt.Errorf("Load: failed to parse bitCount as unsigned integer: %w", err)
+		}
+		bitCount = uint(parsedBitCount)
+
+		if bf.bitCount != bitCount {
+			return fmt.Errorf("Load: bitCount mismatch (expected: %d, got: %d)", bf.bitCount, bitCount)
+		}
+	}
+
+	byteMap := make([]byte, 0, ((bitCount)/8)+1)
+	for scanner.Scan() {
+		line := scanner.Text()
+		parts := strings.Split(line, ":")
+		if len(parts) != 2 {
+			return fmt.Errorf("Load: invalid format: %q", line)
+		}
+
+		dataStr := strings.TrimSpace(parts[1])
+		dataStr = strings.Trim(dataStr, "[]")
+		dataParts := strings.Fields(dataStr)
+
+		for _, part := range dataParts {
+			val, err := strconv.ParseUint(part, 2, 8)
+			if err != nil {
+				return fmt.Errorf("Load: invalid val: %q", line)
+			}
+
+			byteMap = append(byteMap, byte(val))
+		}
+	}
+
+	bf.byteMap = byteMap
+
+	return nil
 }
 
 func (bf *BloomFilter) getBit(index uint) bool {
